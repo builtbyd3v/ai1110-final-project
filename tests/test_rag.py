@@ -191,3 +191,17 @@ def test_retrieve_combines_keyword_vector_and_deterministic(sample_songs, monkey
     )
     assert result.documents[0].song_id == "local-1"
     assert result.debug["keyword_top"] == "local-1"
+
+
+def test_retrieve_offline_never_calls_embedding_api(sample_songs, monkeypatch):
+    docs = build_documents(sample_songs)
+
+    def _explode(*args, **kwargs):
+        raise AssertionError("embedding API must not be called in offline mode")
+
+    monkeypatch.setattr("src.rag.embed_query", _explode)
+    monkeypatch.setattr("src.rag.embed_texts", _explode)
+    result = retrieve(query="rainy lo-fi study", docs=docs, k=2, offline=True)
+    assert len(result.documents) == 2
+    assert result.debug["offline"] is True
+    assert result.debug["vector_top"] is None

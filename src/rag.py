@@ -297,26 +297,30 @@ def retrieve(
     k: int = 5,
     filters: Optional[Dict[str, Any]] = None,
     use_llm_expansion: bool = True,
+    offline: bool = False,
 ) -> RetrievalResult:
     expansion = expand_query(query)
     expanded_query = " ".join([query] + expansion["keywords"])
 
     keyword_ranking = keyword_retrieve(expanded_query, docs, k=k, filters=filters)
 
-    query_embedding = embed_query(expanded_query)
-    embeddings = dict(cache_embeddings or {})
-    missing = [doc for doc in docs if doc.song_id not in embeddings]
-    if missing:
-        fresh = embed_texts([doc.text for doc in missing])
-        for doc in missing:
-            embeddings[doc.song_id] = fresh[doc.text]
-    vector_ranking = vector_retrieve(
-        query_embedding,
-        docs,
-        embeddings,
-        k=k,
-        filters=filters,
-    )
+    if offline:
+        vector_ranking: List[SongDocument] = []
+    else:
+        query_embedding = embed_query(expanded_query)
+        embeddings = dict(cache_embeddings or {})
+        missing = [doc for doc in docs if doc.song_id not in embeddings]
+        if missing:
+            fresh = embed_texts([doc.text for doc in missing])
+            for doc in missing:
+                embeddings[doc.song_id] = fresh[doc.text]
+        vector_ranking = vector_retrieve(
+            query_embedding,
+            docs,
+            embeddings,
+            k=k,
+            filters=filters,
+        )
 
     prefs = filters or {}
     deterministic = recommend_songs(
@@ -330,15 +334,18 @@ def retrieve(
         for song, _, _ in deterministic
     ]
 
-    fused = fuse_rankings(
-        rankings=[keyword_ranking, vector_ranking, deterministic_ranking],
-        weights=[0.35, 0.4, 0.25],
-        k=k,
-    )
+    if offline:
+        rankings = [keyword_ranking, deterministic_ranking]
+        weights = [0.55, 0.45]
+    else:
+        rankings = [keyword_ranking, vector_ranking, deterministic_ranking]
+        weights = [0.35, 0.4, 0.25]
+    fused = fuse_rankings(rankings=rankings, weights=weights, k=k)
     return RetrievalResult(
         documents=fused,
         debug={
             "expanded_query": expanded_query,
+            "offline": offline,
             "keyword_top": keyword_ranking[0].song_id if keyword_ranking else None,
             "vector_top": vector_ranking[0].song_id if vector_ranking else None,
             "deterministic_top": deterministic_ranking[0].song_id if deterministic_ranking else None,

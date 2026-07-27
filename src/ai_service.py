@@ -80,11 +80,15 @@ class VibeMatchService:
         k: int = 5,
         mode: str = "balanced",
         include_live: bool = False,
+        offline: bool = False,
     ) -> RecommendationResult:
         user_prefs = user_prefs or {}
 
         # 1. Retrieve local evidence
-        retrieval = retrieve(query, self.docs, k=k, filters=user_prefs, use_llm_expansion=False)
+        retrieval = retrieve(
+            query, self.docs, k=k, filters=user_prefs,
+            use_llm_expansion=False, offline=offline,
+        )
         local_docs = retrieval.documents
 
         # 2. Optionally fetch live iTunes discoveries
@@ -112,7 +116,6 @@ class VibeMatchService:
 
             recommendations = self._filter_hallucinations(
                 data.get("recommendations", []),
-                local_docs,
                 itunes_results,
             )
             summary = data.get("summary", "")
@@ -134,10 +137,12 @@ class VibeMatchService:
     def _filter_hallucinations(
         self,
         recommendations: List[Dict[str, Any]],
-        local_docs: Sequence[SongDocument],
         itunes_results: Sequence[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        known_titles = {doc.title.lower() for doc in local_docs}
+        # Guard against invented songs: anything not in the full catalog or
+        # the live iTunes result set is dropped, even if the model complied
+        # with an injection attempt.
+        known_titles = {doc.title.lower() for doc in self.docs}
         known_titles.update(item.get("title", "").lower() for item in itunes_results)
         return [
             rec
