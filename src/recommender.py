@@ -1,8 +1,16 @@
 import csv
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any, Callable
 from dataclasses import dataclass
 
-_NUMERIC_FIELDS = ("energy", "tempo_bpm", "valence", "danceability", "acousticness", "popularity", "instrumentalness")
+_NUMERIC_FIELDS = (
+    "energy",
+    "tempo_bpm",
+    "valence",
+    "danceability",
+    "acousticness",
+    "popularity",
+    "instrumentalness",
+)
 
 # Strategy pattern: each mode is a named weight preset. score_song()/Recommender._score()
 # look up a preset by name instead of branching on if/elif, so adding a new mode is just
@@ -18,6 +26,7 @@ SCORING_MODES: Dict[str, Dict[str, float]] = {
 DIVERSITY_ARTIST_PENALTY = 1.5
 DIVERSITY_GENRE_PENALTY = 0.75
 MAX_SAME_GENRE_BEFORE_PENALTY = 2
+
 
 def _score_attributes(
     genre_match: bool,
@@ -67,6 +76,53 @@ def _score_attributes(
         reasons.append("language match (+0.5)")
     return score, reasons
 
+
+def _diversify_select(
+    candidates: List[Dict[str, Any]],
+    k: int,
+    get_artist: Callable[[Any], str],
+    get_genre: Callable[[Any], str],
+) -> List[Dict[str, Any]]:
+    """
+    Greedy artist/genre diversity re-rank shared by OOP and functional recommenders.
+
+    Each candidate dict must include: item, base_score, reasons.
+    Returns selected dicts with adjusted_score and penalty_reasons filled in.
+    """
+    selected: List[Dict[str, Any]] = []
+    artist_counts: Dict[str, int] = {}
+    genre_counts: Dict[str, int] = {}
+    remaining = [dict(c) for c in candidates]
+
+    while remaining and len(selected) < k:
+        for c in remaining:
+            artist = get_artist(c["item"])
+            genre = get_genre(c["item"])
+            penalty = 0.0
+            penalty_reasons: List[str] = []
+            if artist_counts.get(artist, 0) >= 1:
+                penalty += DIVERSITY_ARTIST_PENALTY
+                penalty_reasons.append(
+                    f"same-artist diversity penalty (-{DIVERSITY_ARTIST_PENALTY:.2f})"
+                )
+            if genre_counts.get(genre, 0) >= MAX_SAME_GENRE_BEFORE_PENALTY:
+                penalty += DIVERSITY_GENRE_PENALTY
+                penalty_reasons.append(
+                    f"same-genre diversity penalty (-{DIVERSITY_GENRE_PENALTY:.2f})"
+                )
+            c["adjusted_score"] = c["base_score"] - penalty
+            c["penalty_reasons"] = penalty_reasons
+        remaining.sort(key=lambda c: c["adjusted_score"], reverse=True)
+        best = remaining.pop(0)
+        selected.append(best)
+        artist = get_artist(best["item"])
+        genre = get_genre(best["item"])
+        artist_counts[artist] = artist_counts.get(artist, 0) + 1
+        genre_counts[genre] = genre_counts.get(genre, 0) + 1
+
+    return selected
+
+
 @dataclass
 class Song:
     """
@@ -88,6 +144,44 @@ class Song:
     detailed_mood_tags: str = ""
     instrumentalness: float = 0.0
     language: str = "unknown"
+    description: str = ""
+    listening_context: str = ""
+
+
+def song_to_document(song: Any) -> str:
+    """Build a searchable text document from a song dict or Song dataclass."""
+    if isinstance(song, Song):
+        data = {
+            "id": song.id,
+            "title": song.title,
+            "artist": song.artist,
+            "genre": song.genre,
+            "mood": song.mood,
+            "energy": song.energy,
+            "detailed_mood_tags": song.detailed_mood_tags,
+            "description": song.description,
+            "listening_context": song.listening_context,
+            "language": song.language,
+            "release_decade": song.release_decade,
+        }
+    else:
+        data = song
+
+    tags = str(data.get("detailed_mood_tags") or "").replace(";", ", ")
+    parts = [
+        f"Title: {data.get('title', '')}",
+        f"Artist: {data.get('artist', '')}",
+        f"Genre: {data.get('genre', '')}",
+        f"Mood: {data.get('mood', '')}",
+        f"Energy: {data.get('energy', '')}",
+        f"Tags: {tags}",
+        f"Description: {data.get('description', '')}",
+        f"Listening context: {data.get('listening_context', '')}",
+        f"Language: {data.get('language', '')}",
+        f"Decade: {data.get('release_decade', '')}",
+    ]
+    return "\n".join(parts)
+
 
 @dataclass
 class UserProfile:
@@ -104,6 +198,7 @@ class UserProfile:
     mood_tags: Optional[List[str]] = None
     preferred_instrumentalness: Optional[float] = None
     preferred_language: Optional[str] = None
+
 
 class Recommender:
     """
@@ -133,15 +228,44 @@ class Recommender:
         )
 
     def recommend(self, user: UserProfile, k: int = 5, mode: str = "balanced") -> List[Song]:
-        """Returns the top k songs for user, ranked highest score first."""
-        scored = [(song, self._score(user, song, mode)[0]) for song in self.songs]
-        scored.sort(key=lambda pair: pair[1], reverse=True)
-        return [song for song, _ in scored[:k]]
+        """Returns the top k songs for user, with shared artist/genre diversity re-ranking."""
+        candidates = []
+        for song in self.songs:
+            score, reasons = self._score(user, song, mode)
+            candidates.append({"item": song, "base_score": score, "reasons": reasons})
+        selected = _diversify_select(
+            candidates,
+            k=k,
+            get_artist=lambda s: s.artist,
+            get_genre=lambda s: s.genre,
+        )
+        return [c["item"] for c in selected]
+
+    def recommend_detailed(
+        self, user: UserProfile, k: int = 5, mode: str = "balanced"
+    ) -> List[Tuple[Song, float, str]]:
+        """Like recommend(), but also returns adjusted score and explanation strings."""
+        candidates = []
+        for song in self.songs:
+            score, reasons = self._score(user, song, mode)
+            candidates.append({"item": song, "base_score": score, "reasons": reasons})
+        selected = _diversify_select(
+            candidates,
+            k=k,
+            get_artist=lambda s: s.artist,
+            get_genre=lambda s: s.genre,
+        )
+        results = []
+        for c in selected:
+            explanation = ", ".join(c["reasons"] + c["penalty_reasons"])
+            results.append((c["item"], c["adjusted_score"], explanation))
+        return results
 
     def explain_recommendation(self, user: UserProfile, song: Song, mode: str = "balanced") -> str:
         """Returns a human-readable reason string for why song scored the way it did."""
         _, reasons = self._score(user, song, mode)
         return ", ".join(reasons)
+
 
 def load_songs(csv_path: str) -> List[Dict]:
     """
@@ -154,8 +278,11 @@ def load_songs(csv_path: str) -> List[Dict]:
         song["id"] = int(song["id"])
         for field_name in _NUMERIC_FIELDS:
             song[field_name] = float(song[field_name])
+        song["description"] = song.get("description") or ""
+        song["listening_context"] = song.get("listening_context") or ""
     print(f"Loaded songs: {len(songs)}")
     return songs
+
 
 def score_song(
     user_prefs: Dict, song: Dict, weights: Optional[Dict[str, float]] = None
@@ -164,10 +291,14 @@ def score_song(
     Scores a single song against user preferences.
     Required by recommend_songs() and src/main.py
     """
+    acoustic_bonus = 0.0
+    if user_prefs.get("likes_acoustic") and song.get("acousticness", 0.0) >= 0.6:
+        acoustic_bonus = 0.5
     return _score_attributes(
         genre_match=song["genre"] == user_prefs.get("genre"),
         mood_match=song["mood"] == user_prefs.get("mood"),
         energy_diff=abs(song["energy"] - user_prefs.get("energy", 0.0)),
+        acoustic_bonus=acoustic_bonus,
         weights=weights,
         popularity_diff=abs(song["popularity"] - user_prefs["target_popularity"]) / 100
         if "target_popularity" in user_prefs else None,
@@ -181,6 +312,7 @@ def score_song(
         if "preferred_language" in user_prefs else None,
     )
 
+
 def recommend_songs(
     user_prefs: Dict, songs: List[Dict], k: int = 5, mode: str = "balanced"
 ) -> List[Tuple[Dict, float, str]]:
@@ -193,33 +325,16 @@ def recommend_songs(
     candidates = []
     for song in songs:
         score, reasons = score_song(user_prefs, song, weights)
-        candidates.append({"song": song, "base_score": score, "reasons": reasons})
+        candidates.append({"item": song, "base_score": score, "reasons": reasons})
 
-    selected: List[Tuple[Dict, float, str]] = []
-    artist_counts: Dict[str, int] = {}
-    genre_counts: Dict[str, int] = {}
-    remaining = candidates
-    while remaining and len(selected) < k:
-        for c in remaining:
-            artist = c["song"]["artist"]
-            genre = c["song"]["genre"]
-            penalty = 0.0
-            penalty_reasons = []
-            if artist_counts.get(artist, 0) >= 1:
-                penalty += DIVERSITY_ARTIST_PENALTY
-                penalty_reasons.append(f"same-artist diversity penalty (-{DIVERSITY_ARTIST_PENALTY:.2f})")
-            if genre_counts.get(genre, 0) >= MAX_SAME_GENRE_BEFORE_PENALTY:
-                penalty += DIVERSITY_GENRE_PENALTY
-                penalty_reasons.append(f"same-genre diversity penalty (-{DIVERSITY_GENRE_PENALTY:.2f})")
-            c["adjusted_score"] = c["base_score"] - penalty
-            c["penalty_reasons"] = penalty_reasons
-        remaining.sort(key=lambda c: c["adjusted_score"], reverse=True)
-        best = remaining.pop(0)
-        explanation = ", ".join(best["reasons"] + best["penalty_reasons"])
-        selected.append((best["song"], best["adjusted_score"], explanation))
-        artist = best["song"]["artist"]
-        genre = best["song"]["genre"]
-        artist_counts[artist] = artist_counts.get(artist, 0) + 1
-        genre_counts[genre] = genre_counts.get(genre, 0) + 1
-
-    return selected
+    selected = _diversify_select(
+        candidates,
+        k=k,
+        get_artist=lambda s: s["artist"],
+        get_genre=lambda s: s["genre"],
+    )
+    results = []
+    for c in selected:
+        explanation = ", ".join(c["reasons"] + c["penalty_reasons"])
+        results.append((c["item"], c["adjusted_score"], explanation))
+    return results

@@ -1,19 +1,19 @@
-id,title,artist,genre,mood,energy,tempo_bpm,valence,danceability,acousticness,popularity,release_decade,detailed_mood_tags,instrumentalness,language
-1,Sunrise City,Neon Echo,pop,happy,0.82,118,0.84,0.79,0.18,82,2020s,euphoric;energetic,0.02,english
-2,Midnight Coding,LoRoom,lofi,chill,0.42,78,0.56,0.62,0.71,58,2020s,cozy;nostalgic,0.85,instrumental
-3,Storm Runner,Voltline,rock,intense,0.91,152,0.48,0.66,0.10,71,2010s,aggressive;driving,0.10,english
-4,Library Rain,Paper Lanterns,lofi,chill,0.35,72,0.60,0.58,0.86,45,2020s,cozy;melancholic,0.90,instrumental
-5,Gym Hero,Max Pulse,pop,intense,0.93,132,0.77,0.88,0.05,76,2010s,euphoric;aggressive,0.03,english
-6,Spacewalk Thoughts,Orbit Bloom,ambient,chill,0.28,60,0.65,0.41,0.92,34,2020s,dreamy;melancholic,0.95,instrumental
-7,Coffee Shop Stories,Slow Stereo,jazz,relaxed,0.37,90,0.71,0.54,0.89,39,1990s,cozy;nostalgic,0.30,english
-8,Night Drive Loop,Neon Echo,synthwave,moody,0.75,110,0.49,0.73,0.22,63,1980s,moody;nocturnal,0.15,english
-9,Focus Flow,LoRoom,lofi,focused,0.40,80,0.59,0.60,0.78,41,2020s,focused;calm,0.88,instrumental
-10,Rooftop Lights,Indigo Parade,indie pop,happy,0.76,124,0.81,0.82,0.35,69,2020s,euphoric;playful,0.05,english
-11,Concrete Bloom,MC Solstice,hip-hop,energetic,0.80,96,0.62,0.85,0.08,74,2020s,confident;energetic,0.02,english
-12,Autumn Piano Sketch,Elena Voss,classical,peaceful,0.20,66,0.45,0.20,0.95,28,2000s,peaceful;melancholic,0.98,instrumental
-13,Dust Road Home,Willow Creek,folk,nostalgic,0.33,84,0.52,0.40,0.80,33,1970s,nostalgic;wistful,0.20,english
-14,Iron Collapse,Grave Machine,metal,aggressive,0.97,168,0.30,0.55,0.03,55,2010s,aggressive;dark,0.08,english
-15,Velvet Static,Honeytone,r&b,dreamy,0.45,88,0.68,0.70,0.40,48,2010s,dreamy;sensual,0.12,spanish
-16,Backroad Sundown,Cade Rivers,country,uplifting,0.55,100,0.75,0.62,0.55,51,1990s,uplifting;nostalgic,0.07,english
-17,Riot Fuel,Static Vandals,punk,rebellious,0.90,165,0.40,0.68,0.06,44,2000s,rebellious;aggressive,0.05,english
-18,Tears in Neon,Glass Harbor,electronic,sad,0.30,92,0.25,0.50,0.30,37,2020s,melancholic;lonely,0.25,english
+id,title,artist,genre,mood,energy,tempo_bpm,valence,danceability,acousticness,popularity,release_decade,detailed_mood_tags,instrumentalness,language,description,listening_context
+1,Sunrise City,Neon Echo,pop,happy,0.82,118,0.84,0.79,0.18,82,2020s,euphoric;energetic,0.02,english,"Bright synth-pop anthem with glossy choruses and big hooks, built for sunny high-energy moments.","morning commute; workouts; party warm-up"
+2,Midnight Coding,LoRoom,lofi,chill,0.42,78,0.56,0.62,0.71,58,2020s,cozy;nostalgic,0.85,instrumental,"Soft lo-fi beat with dusty drums and warm vinyl hiss for late-night focus without distraction.","late-night studying; coding; reading"
+3,Storm Runner,Voltline,rock,intense,0.91,152,0.48,0.66,0.10,71,2010s,aggressive;driving,0.10,english,"Driving rock track with stacked guitars and urgent vocals that push forward like a chase scene.","gym sessions; running; intense focus"
+4,Library Rain,Paper Lanterns,lofi,chill,0.35,72,0.60,0.58,0.86,45,2020s,cozy;melancholic,0.90,instrumental,"Gentle rainy-day lo-fi with soft pads and soft piano, calm enough for quiet indoor hours.","rainy afternoons; studying; winding down"
+5,Gym Hero,Max Pulse,pop,intense,0.93,132,0.77,0.88,0.05,76,2010s,euphoric;aggressive,0.03,english,"High-BPM pop banger made for lifting heavy and feeling unstoppable from the first drop.","gym; HIIT; pre-game hype"
+6,Spacewalk Thoughts,Orbit Bloom,ambient,chill,0.28,60,0.65,0.41,0.92,34,2020s,dreamy;melancholic,0.95,instrumental,"Weightless ambient drift with slow evolving textures, ideal for floating through quiet thoughts.","meditation; sleep wind-down; deep work"
+7,Coffee Shop Stories,Slow Stereo,jazz,relaxed,0.37,90,0.71,0.54,0.89,39,1990s,cozy;nostalgic,0.30,english,"Mellow jazz lounge number with brushed drums and soft keys, like overheard cafe conversations.","coffee shops; brunch; casual reading"
+8,Night Drive Loop,Neon Echo,synthwave,moody,0.75,110,0.49,0.73,0.22,63,1980s,moody;nocturnal,0.15,english,"Neon synthwave cruise with pulsing bass and nighttime atmosphere for empty highway miles.","night drives; city walks after dark"
+9,Focus Flow,LoRoom,lofi,focused,0.40,80,0.59,0.60,0.78,41,2020s,focused;calm,0.88,instrumental,"Steady lo-fi loop with minimal melody so your attention stays on the task, not the track.","deep work; studying; writing"
+10,Rooftop Lights,Indigo Parade,indie pop,happy,0.76,124,0.81,0.82,0.35,69,2020s,euphoric;playful,0.05,english,"Playful indie-pop sparkle with bright guitars and a feel-good chorus for golden-hour hangouts.","rooftop hangouts; summer evenings; friend hangs"
+11,Concrete Bloom,MC Solstice,hip-hop,energetic,0.80,96,0.62,0.85,0.08,74,2020s,confident;energetic,0.02,english,"Confident hip-hop with punchy drums and street-smart swagger for moving through the city.","walking the city; workouts; confidence boost"
+12,Autumn Piano Sketch,Elena Voss,classical,peaceful,0.20,66,0.45,0.20,0.95,28,2000s,peaceful;melancholic,0.98,instrumental,"Sparse classical piano sketch with soft dynamics and autumn melancholy, quiet and reflective.","quiet evenings; reading; emotional reset"
+13,Dust Road Home,Willow Creek,folk,nostalgic,0.33,84,0.52,0.40,0.80,33,1970s,nostalgic;wistful,0.20,english,"Acoustic folk story-song with dusty roads and homeward longing, warm and unhurried.","road trips; nostalgia playlists; Sunday mornings"
+14,Iron Collapse,Grave Machine,metal,aggressive,0.97,168,0.30,0.55,0.03,55,2010s,aggressive;dark,0.08,english,"Crushing metal assault with dense riffs and dark intensity for cathartic high-energy release.","heavy lifting; anger release; intense gaming"
+15,Velvet Static,Honeytone,r&b,dreamy,0.45,88,0.68,0.70,0.40,48,2010s,dreamy;sensual,0.12,spanish,"Velvet R&B groove with soft Spanish vocals and hazy synths for late intimate evenings.","date night; evening wind-down; slow dancing"
+16,Backroad Sundown,Cade Rivers,country,uplifting,0.55,100,0.75,0.62,0.55,51,1990s,uplifting;nostalgic,0.07,english,"Uplifting country ride with open-road imagery and a sundown glow that feels hopeful.","road trips; backyard hangs; weekend drives"
+17,Riot Fuel,Static Vandals,punk,rebellious,0.90,165,0.40,0.68,0.06,44,2000s,rebellious;aggressive,0.05,english,"Fast punk burst with shouted hooks and rebellious energy that refuses to sit still.","skate parks; protest playlists; high-adrenaline moments"
+18,Tears in Neon,Glass Harbor,electronic,sad,0.30,92,0.25,0.50,0.30,37,2020s,melancholic;lonely,0.25,english,"Melancholic electronic ballad under neon rain, slow and lonely but beautifully atmospheric.","rainy nights; heartbreak playlists; late reflection"
