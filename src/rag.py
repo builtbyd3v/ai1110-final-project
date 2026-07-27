@@ -12,7 +12,7 @@ from src.recommender import load_songs, recommend_songs, song_to_document
 load_dotenv()
 
 DEFAULT_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
-DEFAULT_GENERATION_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_GENERATION_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 RRF_K = 60.0
 
 _EXPANSION_HINTS = {
