@@ -1,17 +1,16 @@
-# 🎵 Music Recommender Simulation
+# 🎵 VibeMatch — Music Recommender
 
 ## Project Summary
 
-In this project you will build and explain a small music recommender system.
+VibeMatch is a content-based music recommender built on an 18-song catalog.
+It scores songs against a user taste profile (genre, mood, energy, plus
+optional advanced attributes), re-ranks for artist/genre diversity, and
+explains every recommendation with the exact point contributions behind it.
 
-Your goal is to:
-
-- Represent songs and a user "taste profile" as data
-- Design a scoring rule that turns that data into recommendations
-- Evaluate what your system gets right and wrong
-- Reflect on how this mirrors real world AI recommenders
-
-Replace this paragraph with your own summary of what your version does.
+It is being upgraded into an applied AI system: hybrid retrieval (keyword +
+Gemini embeddings + deterministic scoring) over the catalog, grounded Gemini
+responses that cite their sources, image-based vibe analysis, and a Streamlit
+interface — while keeping the transparent scoring recipe below as its core.
 
 ---
 
@@ -68,6 +67,42 @@ same artist.
 **Data flow:** `Input (user_prefs dict)` &rarr; `Process (loop: score_song()
 over every row in songs.csv)` &rarr; `Output (sort by score, return top k)`.
 
+---
+
+## Features
+
+Current:
+
+- Content-based scoring over genre, mood, energy, and 5 optional advanced attributes
+- 4 scoring modes (Strategy pattern): `balanced`, `genre-first`, `mood-first`, `energy-focused`
+- Artist/genre diversity re-ranking with visible penalties
+- Explainable recommendations (every point contribution listed)
+- CLI interface with aligned summary table
+
+Planned (AI upgrade, in progress):
+
+- Hybrid RAG: keyword + Gemini vector search + deterministic scoring, fused
+- Grounded Gemini answers that cite only retrieved catalog/tool results
+- Multimodal input: upload an image, get recommendations from its vibe
+- Live external discovery via the iTunes Search API
+- Streamlit web interface
+
+---
+
+## Architecture
+
+<!-- Placeholder: architecture diagram + component/data-flow explanation will be
+added with the RAG upgrade (Part 2–4). Current flow is the deterministic
+pipeline described in "How The System Works" above. -->
+
+---
+
+## AI Model Details
+
+<!-- Placeholder: models, prompts, retrieval setup, and parameters will be
+documented once the Gemini integration lands (Part 3). Planned:
+gemini-2.5-flash (chat, tools, vision) + gemini-embedding-001 (retrieval). -->
+
 **Known bias:** this recipe over-prioritizes genre. A right-genre song that
 matches nothing else scores 2.0. A wrong-genre song with a perfect mood
 match and a near-perfect energy match tops out just under 2.0 (1.0 mood
@@ -94,7 +129,15 @@ close to exact.
 pip install -r requirements.txt
 ```
 
-3. Run the app:
+3. (Optional, needed for the AI features) configure your Gemini API key:
+
+```bash
+cp .env.example .env   # then paste your key from https://aistudio.google.com/apikey
+```
+
+The CLI recommender works without a key; RAG/chat/image features require one.
+
+4. Run the app:
 
 ```bash
 python -m src.main

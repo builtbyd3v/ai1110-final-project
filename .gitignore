@@ -14,3 +14,9 @@ venv/
 # Pytest cache
 .pytest_cache/
 .remember
+
+# Secrets — never commit API keys (.env.example is the template and stays tracked)
+.env
+
+# Local embedding cache (regenerated from data/songs.csv + Gemini)
+.cache/
