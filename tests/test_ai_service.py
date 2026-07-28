@@ -1,9 +1,11 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.ai_service import (
+    MAX_TOOL_CALLS,
     RecommendationResult,
     VibeMatchService,
     build_system_prompt,
@@ -164,3 +166,117 @@ def test_service_rejects_unsupported_titles(sample_docs):
     # Hallucinated titles should be filtered out
     titles = [r["title"] for r in result.recommendations]
     assert "Made Up Song" not in titles
+
+
+def _final_answer_response(payload):
+    response = MagicMock()
+    response.text = json.dumps(payload)
+    response.function_calls = []
+    return response
+
+
+def test_tool_loop_executes_search_itunes_and_cites_result(sample_docs):
+    tool_call_response = MagicMock()
+    tool_call_response.text = ""
+    tool_call_response.function_calls = [
+        SimpleNamespace(name="search_itunes", args={"query": "synth pop", "limit": 2})
+    ]
+    tool_call_response.candidates = [SimpleNamespace(content="tool-call-content")]
+
+    final_response = _final_answer_response({
+        "recommendations": [
+            {"title": "Blinding Lights", "artist": "The Weeknd", "reason": "Live discovery", "source": "itunes", "evidence": "itunes search for synth pop"},
+        ],
+        "summary": "One live discovery.",
+    })
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = [tool_call_response, final_response]
+
+    itunes_items = [{
+        "song_id": "itunes-1",
+        "title": "Blinding Lights",
+        "artist": "The Weeknd",
+        "source": "itunes",
+        "artwork_url": "https://example.com/art.jpg",
+        "preview_url": "https://example.com/preview.m4a",
+        "track_view_url": "https://music.apple.com/song/1",
+    }]
+    with patch("src.ai_service.search_itunes", return_value=itunes_items):
+        service = VibeMatchService(docs=sample_docs, client=mock_client)
+        result = service.recommend(query="synth pop", user_prefs={}, k=3, offline=True)
+
+    assert result.fallback_used is False
+    assert result.recommendations[0]["title"] == "Blinding Lights"
+    assert result.recommendations[0]["source"] == "itunes"
+    # Enrichment: artwork and preview URLs from the tool result
+    assert result.recommendations[0]["artwork_url"] == "https://example.com/art.jpg"
+    assert result.recommendations[0]["preview_url"] == "https://example.com/preview.m4a"
+    assert result.metadata["tool_calls"] == ["search_itunes"]
+
+
+def test_tool_loop_search_catalog_uses_local_docs(sample_docs):
+    tool_call_response = MagicMock()
+    tool_call_response.text = ""
+    tool_call_response.function_calls = [
+        SimpleNamespace(name="search_catalog", args={"query": "rainy lo-fi", "limit": 2})
+    ]
+    tool_call_response.candidates = [SimpleNamespace(content="tool-call-content")]
+
+    final_response = _final_answer_response({
+        "recommendations": [
+            {"title": "Library Rain", "artist": "Paper Lanterns", "reason": "Rainy lo-fi match", "source": "local", "evidence": "catalog search for rainy lo-fi"},
+        ],
+        "summary": "Found it via catalog search.",
+    })
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = [tool_call_response, final_response]
+
+    service = VibeMatchService(docs=sample_docs, client=mock_client)
+    result = service.recommend(query="rainy lo-fi", user_prefs={}, k=3, offline=True)
+
+    assert result.recommendations[0]["title"] == "Library Rain"
+    assert result.metadata["tool_calls"] == ["search_catalog"]
+
+
+def test_tool_loop_stops_at_max_calls_and_falls_back(sample_docs):
+    def make_tool_response():
+        response = MagicMock()
+        response.text = ""
+        response.function_calls = [
+            SimpleNamespace(name="search_catalog", args={"query": "loop", "limit": 1})
+        ]
+        response.candidates = [SimpleNamespace(content="tool-call-content")]
+        return response
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = [
+        make_tool_response() for _ in range(MAX_TOOL_CALLS)
+    ]
+
+    service = VibeMatchService(docs=sample_docs, client=mock_client)
+    result = service.recommend(query="loop forever", user_prefs={}, k=2, offline=True)
+
+    assert result.fallback_used is True
+    assert result.metadata.get("tool_loop_exhausted") is True
+    assert len(result.metadata["tool_calls"]) == MAX_TOOL_CALLS
+    assert mock_client.models.generate_content.call_count == MAX_TOOL_CALLS
+
+
+def test_service_loads_embedding_cache_when_available(sample_docs, tmp_path):
+    cache_file = tmp_path / "embeddings.json"
+    cache_file.write_text(json.dumps({
+        "documents": [],
+        "embeddings": {"local-1": [1.0, 0.0], "local-2": [0.0, 1.0]},
+    }), encoding="utf-8")
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = _final_answer_response({
+        "recommendations": [], "summary": "none"
+    })
+
+    service = VibeMatchService(
+        docs=sample_docs, client=mock_client, cache_path=str(cache_file)
+    )
+    assert service.cache_embeddings == {"local-1": [1.0, 0.0], "local-2": [0.0, 1.0]}

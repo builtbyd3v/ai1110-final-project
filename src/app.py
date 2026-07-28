@@ -187,13 +187,23 @@ def main() -> None:
             st.markdown("**Live discoveries (iTunes)**")
             for rec in itunes_recs:
                 with st.container(border=True):
-                    cols = st.columns([3, 1])
+                    cols = st.columns([1, 3, 1])
                     with cols[0]:
+                        if rec.get("artwork_url"):
+                            st.image(rec["artwork_url"], width=80)
+                    with cols[1]:
                         st.markdown(f"**{rec['title']}** by {rec['artist']}")
+                        if rec.get("album"):
+                            st.caption(f"Album: {rec['album']}")
                         st.caption(rec["reason"])
                         if rec.get("evidence"):
                             st.caption(f"Evidence: {rec['evidence']}")
-                    with cols[1]:
+                        link_cols = st.columns(2)
+                        if rec.get("preview_url"):
+                            link_cols[0].markdown(f"[▶ Preview]({rec['preview_url']})")
+                        if rec.get("track_view_url"):
+                            link_cols[1].markdown(f"[Apple Music]({rec['track_view_url']})")
+                    with cols[2]:
                         st.markdown(f"`{rec['source']}`")
 
         with st.expander("Debug info"):

@@ -1,15 +1,70 @@
 import json
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from google import genai
 from google.genai import types
 
-from src.rag import DEFAULT_GENERATION_MODEL, SongDocument, retrieve
+from src.rag import (
+    DEFAULT_GENERATION_MODEL,
+    SongDocument,
+    keyword_retrieve,
+    load_cache,
+    retrieve,
+)
 from src.recommender import recommend_songs
 from src.tools import search_itunes
 
 MAX_TOOL_CALLS = 3
+DEFAULT_CACHE_PATH = ".cache/song_embeddings.json"
+
+_TOOL_DECLARATIONS = [
+    types.FunctionDeclaration(
+        name="search_catalog",
+        description=(
+            "Keyword-search the local song catalog for tracks matching a vibe, "
+            "mood, genre, or listening context. Use when the initial evidence "
+            "looks incomplete."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search terms"},
+                "limit": {"type": "integer", "description": "Max results (1-10)"},
+            },
+            "required": ["query"],
+        },
+    ),
+    types.FunctionDeclaration(
+        name="search_itunes",
+        description=(
+            "Live-search the iTunes catalog for real-world tracks beyond the "
+            "local catalog. Use for discovery requests or genres the local "
+            "catalog lacks."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search terms"},
+                "limit": {"type": "integer", "description": "Max results (1-10)"},
+            },
+            "required": ["query"],
+        },
+    ),
+    types.FunctionDeclaration(
+        name="get_song_details",
+        description="Get the full local catalog record for one song by its song_id (e.g. local-3).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "song_id": {"type": "string", "description": "Song id like local-3"},
+            },
+            "required": ["song_id"],
+        },
+    ),
+]
 
 
 @dataclass
@@ -27,7 +82,10 @@ def build_system_prompt() -> str:
         "and live iTunes search results. Never invent songs. "
         "For every recommendation you MUST cite the source (local or itunes) and "
         "the exact evidence (genre match, mood match, retrieval snippet, etc.). "
-        "Keep responses concise. Return valid JSON with keys: recommendations (array), summary (string). "
+        "You may call the provided tools to search the local catalog or the live "
+        "iTunes catalog when the initial evidence is insufficient. "
+        "Keep responses concise. When you are done using tools, return valid JSON "
+        "with keys: recommendations (array), summary (string). "
         "Each recommendation object must have: title, artist, reason, source, evidence."
     )
 
@@ -47,7 +105,7 @@ def build_grounding_prompt(
     ]
     for doc in local_docs:
         lines.append(
-            f"- {doc.title} by {doc.artist} | genre={doc.genre} mood={doc.mood} energy={doc.energy} | {doc.description}"
+            f"- [{doc.song_id}] {doc.title} by {doc.artist} | genre={doc.genre} mood={doc.mood} energy={doc.energy} | {doc.description}"
         )
     lines.append("")
     lines.append("LIVE ITUNES EVIDENCE:")
@@ -58,8 +116,8 @@ def build_grounding_prompt(
     lines.append("")
     lines.append(
         "Recommend up to 5 songs from the evidence above. "
-        "Prefer local catalog when it fits; use itunes for discovery beyond the catalog. "
-        "Cite source and evidence for each. Return ONLY valid JSON."
+        "Prefer local catalog when it fits; call tools if you need more evidence. "
+        "Cite source and evidence for each. Return ONLY valid JSON when finished."
     )
     return "\n".join(lines)
 
@@ -69,9 +127,17 @@ class VibeMatchService:
         self,
         docs: Sequence[SongDocument],
         client: Optional[genai.Client] = None,
+        cache_path: Optional[str] = DEFAULT_CACHE_PATH,
     ):
         self.docs = list(docs)
         self.client = client or genai.Client()
+        self.cache_embeddings: Dict[str, Sequence[float]] = {}
+        if cache_path and Path(cache_path).exists():
+            try:
+                cache = load_cache(Path(cache_path))
+                self.cache_embeddings = cache.get("embeddings", {})
+            except (json.JSONDecodeError, OSError, KeyError):
+                self.cache_embeddings = {}
 
     def recommend(
         self,
@@ -86,38 +152,37 @@ class VibeMatchService:
 
         # 1. Retrieve local evidence
         retrieval = retrieve(
-            query, self.docs, k=k, filters=user_prefs,
-            use_llm_expansion=False, offline=offline,
+            query,
+            self.docs,
+            cache_embeddings=self.cache_embeddings or None,
+            k=k,
+            filters=user_prefs,
+            use_llm_expansion=False,
+            offline=offline,
         )
         local_docs = retrieval.documents
 
-        # 2. Optionally fetch live iTunes discoveries
-        itunes_results = []
+        # 2. Optionally fetch live iTunes discoveries up front
+        itunes_results: List[Dict[str, Any]] = []
         if include_live:
             itunes_results = search_itunes(query, limit=k)
 
-        # 3. Build grounded prompt and call Gemini
+        # 3. Bounded tool-calling loop, then grounded answer
         prompt = build_grounding_prompt(query, local_docs, itunes_results, user_prefs)
         try:
-            response = self.client.models.generate_content(
-                model=DEFAULT_GENERATION_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=build_system_prompt(),
-                    temperature=0.2,
-                ),
-            )
-            raw = response.text.strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            data = json.loads(raw)
+            data, tool_calls, tool_itunes = self._run_tool_loop(prompt, k)
+            itunes_results = itunes_results + tool_itunes
+            if data is None:
+                return self._fallback(
+                    query, user_prefs, k, mode, "tool loop exhausted",
+                    tool_calls=tool_calls, tool_loop_exhausted=True,
+                )
 
             recommendations = self._filter_hallucinations(
                 data.get("recommendations", []),
                 itunes_results,
             )
+            recommendations = self._enrich_itunes_recs(recommendations, itunes_results)
             summary = data.get("summary", "")
             local_count = sum(1 for r in recommendations if r.get("source") == "local")
             itunes_count = sum(1 for r in recommendations if r.get("source") == "itunes")
@@ -128,11 +193,98 @@ class VibeMatchService:
                 metadata={
                     "local_count": local_count,
                     "itunes_count": itunes_count,
+                    "tool_calls": tool_calls,
                     "debug": retrieval.debug,
                 },
             )
         except Exception as exc:
             return self._fallback(query, user_prefs, k, mode, str(exc))
+
+    def _run_tool_loop(
+        self, prompt: str, k: int
+    ) -> tuple[Optional[Dict[str, Any]], List[str], List[Dict[str, Any]]]:
+        """Bounded multi-step tool loop.
+
+        Returns (parsed_json, tool_call_names, itunes_items_from_tools).
+        (None, calls, items) means the model never stopped calling tools.
+        """
+        contents: List[Any] = [prompt]
+        tool_calls: List[str] = []
+        tool_itunes: List[Dict[str, Any]] = []
+        config = types.GenerateContentConfig(
+            system_instruction=build_system_prompt(),
+            temperature=0.2,
+            tools=[types.Tool(function_declarations=_TOOL_DECLARATIONS)],
+        )
+
+        response = None
+        for _ in range(MAX_TOOL_CALLS):
+            response = self.client.models.generate_content(
+                model=DEFAULT_GENERATION_MODEL,
+                contents=contents,
+                config=config,
+            )
+            calls = getattr(response, "function_calls", None)
+            if not isinstance(calls, list) or not calls:
+                break
+            parts = []
+            for call in calls:
+                tool_calls.append(call.name)
+                output = self._dispatch_tool(call.name, dict(call.args or {}), k)
+                if call.name == "search_itunes" and isinstance(output, list):
+                    tool_itunes.extend(output)
+                parts.append(
+                    types.Part.from_function_response(
+                        name=call.name, response={"result": output}
+                    )
+                )
+            if response.candidates:
+                contents.append(response.candidates[0].content)
+            contents.append(types.Content(role="tool", parts=parts))
+        else:
+            return None, tool_calls, tool_itunes
+
+        raw = (response.text or "").strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        return json.loads(raw), tool_calls, tool_itunes
+
+    def _dispatch_tool(self, name: str, args: Dict[str, Any], k: int) -> Any:
+        limit = max(1, min(int(args.get("limit", k)), 10))
+        if name == "search_itunes":
+            return search_itunes(args.get("query", ""), limit=limit)
+        if name == "search_catalog":
+            results = keyword_retrieve(args.get("query", ""), self.docs, k=limit)
+            return [
+                {
+                    "song_id": doc.song_id,
+                    "title": doc.title,
+                    "artist": doc.artist,
+                    "genre": doc.genre,
+                    "mood": doc.mood,
+                    "energy": doc.energy,
+                    "description": doc.description,
+                }
+                for doc in results
+            ]
+        if name == "get_song_details":
+            song_id = args.get("song_id", "")
+            for doc in self.docs:
+                if doc.song_id == song_id:
+                    return {
+                        "song_id": doc.song_id,
+                        "title": doc.title,
+                        "artist": doc.artist,
+                        "genre": doc.genre,
+                        "mood": doc.mood,
+                        "energy": doc.energy,
+                        "description": doc.description,
+                        "listening_context": doc.listening_context,
+                    }
+            return {"error": f"unknown song_id {song_id}"}
+        return {"error": f"unknown tool {name}"}
 
     def _filter_hallucinations(
         self,
@@ -150,6 +302,22 @@ class VibeMatchService:
             if rec.get("title", "").lower() in known_titles
         ]
 
+    def _enrich_itunes_recs(
+        self,
+        recommendations: List[Dict[str, Any]],
+        itunes_results: Sequence[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        by_title = {item.get("title", "").lower(): item for item in itunes_results}
+        enriched = []
+        for rec in recommendations:
+            item = by_title.get(rec.get("title", "").lower())
+            if item:
+                for key in ("artwork_url", "preview_url", "track_view_url", "album"):
+                    if item.get(key):
+                        rec[key] = item[key]
+            enriched.append(rec)
+        return enriched
+
     def _fallback(
         self,
         query: str,
@@ -157,6 +325,8 @@ class VibeMatchService:
         k: int,
         mode: str,
         error: str,
+        tool_calls: Optional[List[str]] = None,
+        tool_loop_exhausted: bool = False,
     ) -> RecommendationResult:
         songs = [doc.raw for doc in self.docs if doc.raw]
         ranked = recommend_songs(user_prefs, songs, k=k, mode=mode)
@@ -171,9 +341,17 @@ class VibeMatchService:
                     "evidence": explanation,
                 }
             )
+        metadata: Dict[str, Any] = {
+            "error": error,
+            "local_count": len(recommendations),
+            "itunes_count": 0,
+            "tool_calls": tool_calls or [],
+        }
+        if tool_loop_exhausted:
+            metadata["tool_loop_exhausted"] = True
         return RecommendationResult(
             recommendations=recommendations,
             summary=f"Gemini unavailable; showing deterministic recommendations for '{query}'.",
             fallback_used=True,
-            metadata={"error": error, "local_count": len(recommendations), "itunes_count": 0},
+            metadata=metadata,
         )
