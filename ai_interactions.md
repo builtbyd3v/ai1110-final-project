@@ -123,3 +123,61 @@ pass it into the shared `_score_attributes()` function, which applies
 whichever weights it was handed without knowing which mode it's in.
 `src/main.py` exposes the switch as a CLI argument:
 `python -m src.main mood-first`.
+
+---
+
+## Applied AI System Upgrade (Final Project)
+
+> The whole final project was built agentically in one extended Cursor
+> session. This section documents that workflow per the same stretch rules.
+
+**What task did you give the agent?**
+
+"Take this rule-based CLI recommender and upgrade it into the AI110 final
+'Applied AI System': Gemini + RAG, all five optional stretch features
+(advanced RAG, multimodal, complex tool use, evaluation framework, polished
+UI), keep all four original bonus features working, TDD throughout, and
+don't commit without asking."
+
+**How the work was decomposed:**
+
+- Part 0: environment (deps, `.env` template, gitignore, CI, README skeleton)
+- Part 1: catalog enrichment (`description`/`listening_context` on all 18
+  songs) + consolidating diversity logic into one shared path for both
+  the OOP and functional recommenders
+- Part 2: hybrid retrieval (`src/rag.py`) — keyword, Gemini embeddings,
+  deterministic re-rank, rank fusion, query expansion, embedding cache
+- Part 3: tools (`src/tools.py`), multimodal (`src/multimodal.py`),
+  orchestration (`src/ai_service.py`) with grounded prompts,
+  hallucination filter, and deterministic fallback
+- Part 4: Streamlit UI (`src/app.py`)
+- Part 5: evaluation harness (`evaluation/`) + edge-case test growth
+- Stretch completion: Gemini function-calling tool loop, iTunes
+  artwork/preview enrichment, live cache build
+- Part 6: documentation (this file, README, model card)
+
+**What did you verify or fix manually?**
+
+- **Deprecated model caught by a live smoke test.** The first default
+  (`gemini-2.5-flash`) returned a 404 "no longer available to new users"
+  only when run against the real API — mocked tests could never have
+  caught it. Migrated to `gemini-3.5-flash` (GA) after checking Google's
+  deprecation table.
+- **Hallucination filter scope bug caught by the evaluation harness.**
+  The filter checked titles against *retrieved* documents, not the full
+  catalog, so a legitimate catalog song was silently dropped whenever
+  retrieval hadn't surfaced it. Case-6 ("prompt injection") exposed it
+  by returning an empty list. Fixed to filter against the full catalog +
+  live result set; the case now strips the injected song and keeps the
+  real one.
+- **Tool-evidence merge bug caught by a unit test.** Tool-called iTunes
+  results never reached the hallucination filter, so every tool-discovered
+  track was filtered out. Fixed by accumulating tool outputs into the
+  evidence list.
+- **Live quota outage became a feature demo.** Free-tier Gemini quota
+  (20 req/day) ran out mid-verification; the app served deterministic
+  recommendations with a visible warning instead of crashing — exactly
+  the designed fallback behavior, confirmed working under real
+  conditions rather than a mock.
+- **Evaluation run twice:** mocked (CI-safe, `results.md`) and live
+  against the real API (`results-live.md`), 6/6 both modes.

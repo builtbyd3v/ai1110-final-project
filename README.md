@@ -1,16 +1,20 @@
-# 🎵 VibeMatch — Music Recommender
+# 🎵 VibeMatch — AI Music Recommender
 
 ## Project Summary
 
-VibeMatch is a content-based music recommender built on an 18-song catalog.
-It scores songs against a user taste profile (genre, mood, energy, plus
-optional advanced attributes), re-ranks for artist/genre diversity, and
-explains every recommendation with the exact point contributions behind it.
+VibeMatch is an applied AI music recommendation system built on an 18-song
+catalog. A user describes a vibe in plain text (or uploads an image of it),
+and VibeMatch retrieves candidate songs with hybrid RAG — keyword search,
+Gemini vector embeddings, and the original deterministic scoring recipe
+fused together — then has Gemini write grounded recommendations that cite
+exactly which catalog records or live iTunes results each pick came from.
+Gemini can also call tools mid-conversation (`search_catalog`,
+`search_itunes`, `get_song_details`) when the initial evidence is thin.
 
-It is being upgraded into an applied AI system: hybrid retrieval (keyword +
-Gemini embeddings + deterministic scoring) over the catalog, grounded Gemini
-responses that cite their sources, image-based vibe analysis, and a Streamlit
-interface — while keeping the transparent scoring recipe below as its core.
+Underneath the AI layer sits the original transparent scoring system:
+genre/mood/energy point weights, four scoring modes, and artist/genre
+diversity re-ranking — which doubles as a working fallback when the Gemini
+API is unavailable.
 
 ---
 
@@ -71,37 +75,86 @@ over every row in songs.csv)` &rarr; `Output (sort by score, return top k)`.
 
 ## Features
 
-Current:
+**AI system**
+
+- Hybrid RAG: keyword search + Gemini vector embeddings + deterministic scoring, fused with reciprocal-rank and weighted rank fusion
+- Grounded Gemini answers that cite only catalog records or live iTunes results; a hallucination filter drops any title outside both sets
+- Bounded tool calling: Gemini can invoke `search_catalog`, `search_itunes`, and `get_song_details` (max 3 calls per request, with graceful exhaustion fallback)
+- Multimodal input: upload an image and Gemini Vision extracts mood/energy/aesthetic/activity tags that become the retrieval query
+- Live discovery via the iTunes Search API, with album artwork, 30-second previews, and Apple Music links
+- Deterministic fallback: if Gemini fails, is rate-limited, or no key is configured, the original scoring engine still serves recommendations
+- Streamlit web interface with structured preference controls, chat history, source labels, and system-health indicators
+
+**Original recommender (preserved)**
 
 - Content-based scoring over genre, mood, energy, and 5 optional advanced attributes
 - 4 scoring modes (Strategy pattern): `balanced`, `genre-first`, `mood-first`, `energy-focused`
-- Artist/genre diversity re-ranking with visible penalties
+- Artist/genre diversity re-ranking with visible penalties (shared by both API paths)
 - Explainable recommendations (every point contribution listed)
 - CLI interface with aligned summary table
-
-Planned (AI upgrade, in progress):
-
-- Hybrid RAG: keyword + Gemini vector search + deterministic scoring, fused
-- Grounded Gemini answers that cite only retrieved catalog/tool results
-- Multimodal input: upload an image, get recommendations from its vibe
-- Live external discovery via the iTunes Search API
-- Streamlit web interface
 
 ---
 
 ## Architecture
 
-<!-- Placeholder: architecture diagram + component/data-flow explanation will be
-added with the RAG upgrade (Part 2–4). Current flow is the deterministic
-pipeline described in "How The System Works" above. -->
+```mermaid
+flowchart LR
+    Inputs["Text, preferences, or image"] --> UI["Streamlit UI (src/app.py)"]
+    UI --> Service["VibeMatchService (src/ai_service.py)"]
+    Image["Image upload"] --> Vision["Gemini Vision vibe extraction (src/multimodal.py)"]
+    Vision --> Service
+    Service --> RAG["Hybrid retrieval (src/rag.py)"]
+    RAG --> Keyword["Keyword search"]
+    RAG --> Vector["Gemini embeddings + cache (.cache/)"]
+    RAG --> Deterministic["Deterministic scorer (src/recommender.py)"]
+    Keyword --> Fusion["Rank fusion"]
+    Vector --> Fusion
+    Deterministic --> Fusion
+    Fusion --> Service
+    Service --> Tools["Bounded tool loop (max 3 calls)"]
+    Tools --> CatalogTool["search_catalog"]
+    Tools --> ITunesTool["search_itunes - live iTunes API"]
+    Tools --> DetailsTool["get_song_details"]
+    Service --> Gemini["Gemini 3.5 Flash - grounded answer"]
+    Gemini --> Filter["Hallucination filter"]
+    Filter --> UI
+    Service -.->|Gemini unavailable| Fallback["Deterministic fallback"] -.-> UI
+```
+
+**Component responsibilities**
+
+- `src/app.py` — Streamlit interface; builds `user_prefs`, handles text/image input, renders source-separated results
+- `src/ai_service.py` — orchestration: retrieval → tool loop → grounded generation → hallucination filter → fallback
+- `src/rag.py` — documents, keyword/vector retrieval, query expansion, rank fusion, embedding cache
+- `src/recommender.py` — the original transparent scoring recipe, scoring modes, diversity (used as a ranking signal AND as the fallback)
+- `src/multimodal.py` — image validation + Gemini Vision → structured `VibeProfile`
+- `src/tools.py` — iTunes Search API client with 5s timeout, plus catalog tool helpers
 
 ---
 
 ## AI Model Details
 
-<!-- Placeholder: models, prompts, retrieval setup, and parameters will be
-documented once the Gemini integration lands (Part 3). Planned:
-gemini-2.5-flash (chat, tools, vision) + gemini-embedding-001 (retrieval). -->
+| Piece | Choice |
+|---|---|
+| Generation (chat, tools, vision) | `gemini-3.5-flash` (GA) |
+| Embeddings | `gemini-embedding-001` (text), cached in `.cache/song_embeddings.json` |
+| Temperature | 0.2 (low, for grounded factual answers) |
+| Tool loop budget | Max 3 tool calls per request |
+| iTunes timeout | 5 seconds |
+| Config | `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_EMBEDDING_MODEL` in `.env` (see `.env.example`) |
+
+**Grounding strategy.** The system prompt restricts Gemini to the evidence in
+the prompt (retrieved catalog documents + iTunes results) and requires a
+source + evidence citation per recommendation. A post-processing
+hallucination filter then drops any recommended title not present in the
+full catalog or the live result set — so even a model that complies with a
+prompt injection cannot surface an invented song (verified by evaluation
+case-6).
+
+**Free-tier note.** `gemini-3.5-flash` free tier allows ~20 generation
+requests/day. When exhausted, the app automatically serves deterministic
+recommendations and says so. `GEMINI_MODEL` can be switched to
+`gemini-3.1-flash-lite` (separate quota) without code changes.
 
 **Known bias:** this recipe over-prioritizes genre. A right-genre song that
 matches nothing else scores 2.0. A wrong-genre song with a perfect mood
@@ -137,21 +190,39 @@ cp .env.example .env   # then paste your key from https://aistudio.google.com/ap
 
 The CLI recommender works without a key; RAG/chat/image features require one.
 
-4. Run the app:
+4. (Optional, speeds up first AI request) build the embedding cache:
 
 ```bash
-python -m src.main
+python -m src.build_embeddings
+```
+
+5. Run the app — web interface:
+
+```bash
+streamlit run src/app.py
+```
+
+or the original CLI (no API key needed):
+
+```bash
+python -m src.main            # add a mode: balanced | genre-first | mood-first | energy-focused
 ```
 
 ### Running Tests
 
-Run the starter tests with:
-
 ```bash
-pytest
+pytest -v
 ```
 
-You can add more tests in `tests/test_recommender.py`.
+### Running the Evaluation Harness
+
+```bash
+python evaluation/run_evaluation.py          # mocked Gemini, CI-safe
+python evaluation/run_evaluation.py --live   # real API (uses free-tier quota)
+```
+
+Results are written to `evaluation/results.md` (mocked) and
+`evaluation/results-live.md` (live).
 
 ---
 
@@ -177,11 +248,37 @@ Riot Fuel      | 0.90  | energy similarity (+0.90)
 Note this replaces `Night Drive Loop` (the un-penalized #5 result) with `Riot
 Fuel`, see **Bonus Challenges** below for why.
 
-**Screenshot or video** *(optional)*: <!-- Insert a screenshot or demo video link here -->
+**Screenshot or video**: <!-- Insert app screenshot or demo video link here -->
+
+**Demo checklist** (record after docs are in):
+
+1. `streamlit run src/app.py` → text query "chill lo-fi for late night studying" → grounded picks with evidence
+2. Toggle *Include live iTunes discoveries* → query a genre the catalog lacks (e.g. reggae) → artwork + preview link
+3. Upload an image in the *Match this vibe* tab → extracted mood/energy → recommendations
+4. Show fallback: temporarily set `GEMINI_MODEL=invalid` → warning banner + deterministic list (restore after)
+5. Terminal: `pytest -q` (48 passed) and `python evaluation/run_evaluation.py` (6/6)
 
 ---
 
-## Experiments You Tried
+## Evaluation
+
+The automated harness in `evaluation/` runs six cases — clear preference
+match, natural-language mood request, contradictory preferences, unsupported
+genre, Gemini API failure, and a prompt-injection attempt — checking
+groundedness (no invented songs), citation completeness, fallback behavior,
+forbidden-title absence, and latency.
+
+Latest results: **6/6 pass** in both modes.
+
+- Mocked (CI-safe): [evaluation/results.md](evaluation/results.md)
+- Live Gemini API: [evaluation/results-live.md](evaluation/results-live.md)
+
+Unit/integration coverage: 48 tests across recommender scoring, diversity,
+retrieval, tools, multimodal validation, orchestration, fallback, and the
+UI preference builder. CI runs the full suite on every push (GitHub Actions,
+`.github/workflows/ci.yml`).
+
+## Manual Experiments (original deterministic engine)
 
 ### Stress test: four profiles
 
@@ -307,14 +404,36 @@ axes):
 
 ---
 
+## Stretch Goals and Bonus Features
+
+**Final-assignment stretches** (what, why, and the extra effort):
+
+1. **Advanced RAG** — hybrid keyword + Gemini vector + deterministic retrieval with query expansion and rank fusion. *Why:* a pure embedding search misses exact genre/energy intent on an 18-song catalog; fusing three signals covers both semantic vibe and hard constraints. *Effort:* custom fusion logic, embedding cache, offline mode, 12 retrieval tests.
+2. **Multimodal AI** — image upload → Gemini Vision → structured vibe profile (mood/energy/aesthetic/activity) → retrieval query. *Why:* "match this vibe" is the most natural way to ask for music. *Effort:* image validation (type/size/signature), strict JSON extraction, failure handling, 9 tests.
+3. **Complex tool use** — Gemini function-calling loop with `search_catalog`, `search_itunes`, `get_song_details`; bounded at 3 calls with exhaustion fallback. *Why:* lets the model seek more evidence instead of guessing, and the live iTunes tool extends a tiny catalog to the real world. *Effort:* manual multi-turn loop (not SDK auto-calling) for explicit budget control, tool-evidence merging with the hallucination filter, 3 dedicated tests.
+4. **Evaluation framework** — custom automated harness (`evaluation/`) with groundedness, citation, fallback, forbidden-title, and latency checks, runnable mocked (CI) or live. *Why:* "it worked when I tried it" is not evidence; the injection and outage cases only exist because a harness makes them repeatable. *Effort:* 6 cases × 2 modes, results committed to the repo.
+5. **User interface** — Streamlit app with structured controls, chat history, image input, source-labeled results, artwork/previews, health indicators. *Why:* a recommender you can't click through isn't demoable. *Effort:* tabbed layout, error/empty states, session management.
+
+Also met from the rubric's stretch column: multiple AI features, multi-source + real-time data (CSV + live iTunes), advanced error recovery + proactive health indicators, comprehensive edge-case test suite (48 tests), and CI via GitHub Actions.
+
+**Original starter-repo bonuses** (completed earlier, all preserved and tested):
+
+1. **Advanced song features** — 5 extra CSV attributes with optional scoring bonuses.
+2. **Multiple scoring modes** — Strategy-pattern weight presets, CLI-switchable.
+3. **Diversity penalty** — shared by both API paths after Part 1 consolidation.
+4. **Visual summary table** — stdlib ASCII table in the CLI.
+
+---
+
 ## Limitations and Risks
 
-- 18-song catalog. There's no guarantee a good match for any given profile exists at all.
+- 18-song local catalog. There's no guarantee a good match for any given profile exists at all; the iTunes tool mitigates discovery but its results are not scored against the taste profile.
 - Genre outweighs mood 2:1, so a wrong-genre song can lose to a right-genre song even when it fits the user's mood and energy far better (see the adversarial profile above).
-- No contradiction detection. A profile like `genre=metal, mood=sad, energy=0.9` is internally inconsistent, but the scorer just adds points and returns a confident-looking ranked list anyway.
+- No contradiction detection. A profile like `genre=metal, mood=sad, energy=0.9` is internally inconsistent; the deterministic scorer just adds points, though the Gemini layer usually names the trade-off in its summary.
 - Content-based only, no other users, no play history, no lyrics or audio analysis, no way to learn from skips or replays over time.
-
-You will go deeper on this in your model card.
+- LLM risks: hallucinated songs (mitigated by the catalog-wide filter), prompt injection (same filter + restricted system prompt; see evaluation case-6), and nondeterminism (temperature 0.2 reduces but doesn't eliminate it).
+- Privacy: queries, preferences, and uploaded images are sent to the Gemini API; iTunes queries go to Apple. Nothing is stored server-side by this app, but the data does leave your machine.
+- Free-tier quota (~20 Gemini requests/day) means the AI layer can cut out mid-demo; the deterministic fallback exists for exactly this reason.
 
 ---
 

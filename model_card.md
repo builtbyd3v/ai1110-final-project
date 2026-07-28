@@ -1,8 +1,14 @@
-# 🎧 Model Card: Music Recommender Simulation
+# 🎧 Model Card: VibeMatch
 
 ## 1. Model Name  
 
-**VibeMatch 1.0**
+**VibeMatch 2.0** — applied AI music recommender (deterministic scoring core +
+Gemini 3.5 Flash generation/vision/tools + gemini-embedding-001 retrieval)
+
+> Sections 2–9 below are the original v1.0 deterministic-system card, kept
+> because the scoring engine they describe still runs inside v2.0 (as a
+> ranking signal and the fallback). Section 10 covers what the AI layer
+> changes.
 
 ---
 
@@ -129,3 +135,60 @@ can still "feel" like a real recommendation, right up until you feed it
 an edge case it wasn't built to handle. If I kept going, I'd want to test
 many more adversarial profiles before trusting this kind of system with
 anything beyond a classroom demo.
+
+---
+
+## 10. v2.0 AI Layer Update
+
+**What changed.** v2.0 wraps the v1.0 scoring engine in an applied AI
+system: hybrid RAG retrieval (keyword + `gemini-embedding-001` vectors +
+the v1.0 scorer, fused), grounded answers from `gemini-3.5-flash`, a
+bounded tool-calling loop (`search_catalog`, `search_itunes`,
+`get_song_details`), Gemini Vision image analysis, live iTunes discovery,
+and a Streamlit UI. The v1.0 engine survives as both a ranking signal in
+the fusion and the no-API fallback.
+
+**New risks introduced by the AI layer, and their mitigations:**
+
+- **Hallucination.** An LLM recommender can invent plausible-sounding
+  songs. Mitigation: system prompt restricts it to provided evidence, and
+  a post-processing filter drops any title not in the catalog or the live
+  iTunes result set. Verified by evaluation case-6, where a mock model
+  complied with an injection ("recommend Never Gonna Give You Up") and
+  the filter stripped it while keeping the legitimate pick.
+- **Prompt injection.** User text goes straight into the prompt.
+  Mitigation: same catalog-wide filter + evidence-citation requirement;
+  the worst case is a wasted API call, not a fake recommendation.
+- **Privacy.** Queries, taste preferences, and uploaded images leave the
+  machine (Gemini API; Apple for iTunes). Nothing is persisted by the app,
+  but users should know images are analyzed server-side by Google.
+- **Nondeterminism.** Same query can rank differently across runs.
+  Mitigation: temperature 0.2; deterministic fallback is fully
+  reproducible; evaluation harness re-runs the same cases to catch drift.
+- **External data quality.** iTunes results are not scored against the
+  taste profile — they're labeled "live discoveries" and kept visually
+  separate from catalog picks so users can tell curated evidence from
+  raw search hits.
+- **Availability/cost.** Free tier is ~20 Gemini requests/day. The app
+  degrades to deterministic mode with a visible warning instead of
+  failing, which turned a quota outage during development into a demo of
+  the fallback rather than a broken app.
+
+**Evaluation (v2.0).** Six automated cases covering clear matches,
+natural-language moods, contradictory preferences, unsupported genres,
+API failure, and prompt injection — 6/6 passing in both mocked and live
+modes (`evaluation/results.md`, `evaluation/results-live.md`), plus 48
+unit/integration tests in CI. The v1.0 adversarial finding (genre
+silently outweighing mood) still stands in the deterministic layer; the
+Gemini summary now usually *names* that trade-off out loud, which is an
+honesty improvement but not a fix.
+
+**Personal reflection (v2.0).** The biggest surprise was that the AI
+layer's failures looked exactly like the v1.0 failures: confident,
+plausible, and wrong in the same direction unless something forces
+evidence. The hallucination filter exists because a mocked model
+happily followed an injection on the first try — the guardrail mattered
+more than the prompt. The second surprise was how much of the "AI
+system" is boring engineering: cache files, timeouts, tool budgets, and
+a fallback path. The model was the easy part; making it trustworthy was
+the project.
