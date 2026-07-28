@@ -14,6 +14,16 @@ from src.ai_service import (
 from src.rag import SongDocument
 
 
+@pytest.fixture(autouse=True)
+def _fake_embeddings(monkeypatch):
+    """Retrieval must never call the real embedding API in tests (CI has no key)."""
+    monkeypatch.setattr("src.rag.embed_query", lambda query, model=None: [1.0, 0.0])
+    monkeypatch.setattr(
+        "src.rag.embed_texts",
+        lambda texts, model=None: {t: [1.0, 0.0] for t in texts},
+    )
+
+
 @pytest.fixture
 def sample_docs():
     return [
